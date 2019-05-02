@@ -4628,7 +4628,19 @@ to suppress the interactive inquiry about overwriting if the file already exists
           (if (read undo-tree-list--string)
             (setq bfn+hash+tree
                     (concat
-                      bfn
+                      ;;; A buffer-file-name containing one or more spaces must
+                      ;;; be surrounded with double-quotes.  `undo-tree-history-restore'
+                      ;;; calls `read' from `point-min' of the saved history file
+                      ;;; to do two things:  (1) see whether the history file
+                      ;;; contains a buffer-file-name; and (2) jump to the end
+                      ;;; of the first line using `read' to process the next line
+                      ;;; containing the sha/hash string.  Consider developing a
+                      ;;; better test such as `looking-at' `, `file-exists-p' and
+                      ;;; go to the beginning of the next line.
+                      ;;;
+                      ;;; How to programmatically surround a string with escaped double-quote?
+                      ;;; https://emacs.stackexchange.com/q/32077/2287
+                      (format "\"%s\"" bfn)
                       "\n"
                       hash
                       "\n"
@@ -4664,7 +4676,7 @@ history file in the default location."
            (what-is-it (when string-or-file (split-string string-or-file "\n")))
            (original-buffer (current-buffer))
            (sha1-original-buffer (undo-tree-sha1 original-buffer))
-           hash tree temp-buffer)
+           hash tree temp-buffer bfn)
       (lawlist-with-temp-buffer
         (setq temp-buffer (current-buffer))
         (cond
@@ -4684,16 +4696,19 @@ history file in the default location."
         ;;; Read from `point-min' to end of the slot for the `buffer-file-name'.
         ;;; If reading back the slot for the `buffer-file-name' returns `nil`,
         ;;; then assume this is a history file of a non-file-visiting buffer.
-        (unless (read temp-buffer)
+        (unless (setq bfn (read temp-buffer))
           (message "undo-tree-history-restore:  The slot for `buffer-file-name' is empty."))
+        (unless (file-exists-p bfn)
+          (message "undo-tree-history-restore:  The file (%s) does not exist." bfn)
+          (throw 'sanith-check-error nil))
         ;;; Read from end of the buffer-file-name to the end of the hash string.
         (unless (setq hash (read temp-buffer))
           (message "undo-tree-history-restore:  Error reading saved SHA1 hash:  %s | %s"
                    original-buffer hash)
           (throw 'sanity-check-error nil))
         (unless (string= sha1-original-buffer hash)
-          (message "undo-tree-history-restore:  Error comparing current SHA1 to saved SHA1 hash:  %s"
-                   original-buffer)
+          (message "undo-tree-history-restore (%s):  Error comparing current (%s) to saved (%s)"
+                   original-buffer sha1-original-buffer hash)
           (throw 'sanity-check-error nil))
         ;;; Read from the end of the hash string to the end of the buffer.
         (unless (setq tree (read temp-buffer))
